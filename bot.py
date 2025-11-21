@@ -1,105 +1,119 @@
-import logging
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+import telebot
+from telebot import types
 import requests
-import datetime
-import asyncio
+import threading
+import time
+from datetime import datetime
 
-# ============================
-#  BU YERGA TOKENINGIZNI YOZING
-# ============================
-BOT_TOKEN = "6282966969:AAFskjGj-doRRZDunEkP2_pmw0ZtqBS2_ms"
-# ============================
+BOT_TOKEN = "6282966969:AAFskjGj-doRRZDunEkP2_pmw0ZtqBS2_ms"   # <<< TOKEN SHU YERGA KIRITILADI
+bot = telebot.TeleBot(BOT_TOKEN)
 
-
-logging.basicConfig(level=logging.INFO)
+user_data = {}   # {chat_id: {"region": "Tashkent"}}
 
 
-# --- Namoz vaqtini olish funksiyasi ---
-def get_prayer_times(lat, lon):
-    url = f"https://api.aladhan.com/v1/timings?latitude={lat}&longitude={lon}&method=2"
+# ---------- Namoz vaqtlarini olish funksiyasi ----------
+def get_namoz_times(region):
+    url = f"https://islomapi.uz/api/present/day?region={region}"
+    r = requests.get(url).json()
+    return r["times"]
+
+
+# ---------- /start komandasi ----------
+@bot.message_handler(commands=['start'])
+def start(msg):
+    text = (
+        "🕌 Assalomu alaykum!\n\n"
+        "Men *namoz vaqtlarini eslatib turuvchi botman*.\n"
+        "Quyida lokatsiya yuborish tugmasi chiqadi 👇\n"
+        "Shu orqali qaysi shaharda ekaningizni bilib sizga namoz vaqtlarini eslata olaman."
+    )
+    
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn = types.KeyboardButton("📍 Lokatsiyani yuborish", request_location=True)
+    kb.add(btn)
+    
+    bot.send_message(msg.chat.id, text, reply_markup=kb, parse_mode="Markdown")
+
+
+# ---------- Lokatsiya qabul qilish ----------
+@bot.message_handler(content_types=['location'])
+def get_location(msg):
+    lat = msg.location.latitude
+    lon = msg.location.longitude
+
+    # joylashuv orqali shaharni aniqlash
+    url = f"https://geocode.xyz/{lat},{lon}?json=1"
     data = requests.get(url).json()
-    return data["data"]["timings"]
 
+    try:
+        region = data["city"]
+    except:
+        region = "Tashkent"
 
-# --- Start komandasi ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    button = KeyboardButton("📍 Lokatsiya yuborish", request_location=True)
-    markup = ReplyKeyboardMarkup([[button]], resize_keyboard=True)
+    user_data[msg.chat.id] = {"region": region}
 
-    await update.message.reply_text(
-        "Assalomu alaykum!\nNamoz vaqtlarini olish uchun lokatsiya yuboring.",
-        reply_markup=markup
+    times = get_namoz_times(region)
+
+    result = (
+        f"🏙 Hudud: {region}\n\n"
+        f"Bomdod: {times['tong_saharlik']}\n"
+        f"Quyosh: {times['quyosh']}\n"
+        f"Peshin: {times['peshin']}\n"
+        f"Asr: {times['asr']}\n"
+        f"Shom: {times['shom_iftor']}\n"
+        f"Xufton: {times['hufton']}\n\n"
+        "✔️ Eslatmalar yoqildi!"
     )
 
-
-# --- Lokatsiya kelganda ---
-async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lat = update.message.location.latitude
-    lon = update.message.location.longitude
-
-    context.user_data["lat"] = lat
-    context.user_data["lon"] = lon
-
-    times = get_prayer_times(lat, lon)
-
-    msg = (
-        "🕌 *Bugungi Namoz Vaqtlari:*\n\n"
-        f"Bomdod: {times['Fajr']}\n"
-        f"Quyosh: {times['Sunrise']}\n"
-        f"Peshin: {times['Dhuhr']}\n"
-        f"Asr: {times['Asr']}\n"
-        f"Shom: {times['Maghrib']}\n"
-        f"Xufton: {times['Isha']}"
-    )
-
-    await update.message.reply_text(msg, parse_mode="Markdown")
-    await update.message.reply_text("⏳ Vaqtlar 00:00 da avtomatik yangilanadi.")
+    bot.send_message(msg.chat.id, result)
 
 
-# --- Har kuni 00:00 da avtomatik yuborish ---
-async def send_daily_times(context: ContextTypes.DEFAULT_TYPE):
+# ---------- Eslatma yuborish funksiyasi ----------
+def send_daily_updates():
+    while True:
+        now = datetime.now().strftime("%H:%M")
 
-    for chat_id, data in context.application.user_data.items():
-        if "lat" not in data or "lon" not in data:
-            continue
+        for chat_id, info in user_data.items():
+            region = info["region"]
+            times = get_namoz_times(region)
 
-        lat = data["lat"]
-        lon = data["lon"]
+            # 00:00 da yangilangan vaqt
+            if now == "00:00":
+                bot.send_message(chat_id, "🔄 Namoz vaqtlari yangilandi!")
+                txt = (
+                    f"🏙 Hudud: {region}\n\n"
+                    f"Bomdod: {times['tong_saharlik']}\n"
+                    f"Quyosh: {times['quyosh']}\n"
+                    f"Peshin: {times['peshin']}\n"
+                    f"Asr: {times['asr']}\n"
+                    f"Shom: {times['shom_iftor']}\n"
+                    f"Xufton: {times['hufton']}"
+                )
+                bot.send_message(chat_id, txt)
 
-        times = get_prayer_times(lat, lon)
+            # Namoz eslatmalari
+            if now == times['tong_saharlik']:
+                bot.send_message(chat_id, "🌅 Bomdod vaqti bo‘ldi!")
 
-        msg = (
-            "🕌 *Yangi kun — yangilangan namoz vaqtlari:*\n\n"
-            f"Bomdod: {times['Fajr']}\n"
-            f"Quyosh: {times['Sunrise']}\n"
-            f"Peshin: {times['Dhuhr']}\n"
-            f"Asr: {times['Asr']}\n"
-            f"Shom: {times['Maghrib']}\n"
-            f"Xufton: {times['Isha']}"
-        )
+            if now == times['peshin']:
+                bot.send_message(chat_id, "🌞 Peshin vaqti bo‘ldi!")
 
-        try:
-            await context.bot.send_message(chat_id=int(chat_id), text=msg, parse_mode="Markdown")
-        except:
-            pass
+            if now == times['asr']:
+                bot.send_message(chat_id, "🌤 Asr vaqti bo‘ldi!")
 
+            if now == times['shom_iftor']:
+                bot.send_message(chat_id, "🌇 Shom vaqti bo‘ldi!")
 
-# --- Asosiy ishga tushirish ---
-async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+            if now == times['hufton']:
+                bot.send_message(chat_id, "🌙 Xufton vaqti bo‘ldi!")
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.LOCATION, location_handler))
-
-    # Har kuni 00:00 da yangilash
-    app.job_queue.run_daily(
-        send_daily_times,
-        time=datetime.time(0, 0, 0)  # 00:00
-    )
-
-    await app.run_polling()
+        time.sleep(30)  # 30 soniyada bir tekshiradi
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+
+# ---------- Eslatma funksiyasini fon rejimida ishga tushiramiz ----------
+threading.Thread(target=send_daily_updates, daemon=True).start()
+
+
+# ---------- Botni ishga tushirish ----------
+bot.polling(none_stop=True)
