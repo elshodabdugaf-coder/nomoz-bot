@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import datetime
 
-BOT_TOKEN = "BU_YERGA_TOKEN"   # <<< TOKENNI SHU YERGA YOZASIZ
+BOT_TOKEN = "6282966969:AAFskjGj-doRRZDunEkP2_pmw0ZtqBS2_ms"   # <<< TOKENNI SHU YERGA YOZASIZ
 bot = telebot.TeleBot(BOT_TOKEN)
 
 user_data = {}   # {chat_id: {"lat": ..., "lon": ..., "times": {...}}}
